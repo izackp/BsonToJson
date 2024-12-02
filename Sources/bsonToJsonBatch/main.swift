@@ -34,52 +34,75 @@ struct AppError: LocalizedError {
 
 @available(macOS 10.15.4, *)
 struct ConvertBsonToJson: ParsableCommand {
+    @Flag(help: "Automatically overwrite existing files")
+    var overwrite: Bool = false
+    
     @Argument(help: "Files to convert", completion: .file(), transform: URL.init(fileURLWithPath:))
     var inputFiles: [URL]
+    
+    func createFileHandle(_ url:URL) throws -> FileHandle {
+        let fm = FileManager.default
+        if (fm.fileExists(atPath: url.path)) {
+            if (overwrite) {
+                return try FileHandle(forWritingTo: url)
+            } else {
+                throw AppError("File already exists. Specify overwrite to ignore. \(url.path)")
+            }
+        }
+        
+        print("creating file: \(url.path)")
+        guard fm.createFile(
+            atPath: url.path,
+            contents: nil,
+            attributes: [:]
+        ) else {
+            throw AppError("Cannot access output file: \(url.path)")
+        }
+        let outHandle = try FileHandle(forWritingTo: url)
+        return outHandle
+    }
 
     mutating func run() throws {
         
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         for eachUrl in inputFiles {
-            print("creating handle: \(eachUrl.path)")
-            let inputHandle = try FileHandle(forReadingFrom: eachUrl)
-            guard let data = try inputHandle.readToEnd() else {
-                throw AppError("Empty input.")
+            do {
+                print("Processing: \(eachUrl.path)")
+                let inputHandle = try FileHandle(forReadingFrom: eachUrl)
+                guard let data = try inputHandle.readToEnd() else {
+                    throw AppError("Empty input.")
+                }
+                
+                let document = Document(data: data)
+                let validation = document.validate()
+                if (validation.isValid == false) {
+                    throw AppError("Invalid bson at pos \(validation.errorPosition ?? -1)\nKey: \(validation.key ?? "N/A")\nReason: \(validation.reason ?? "N/A")")
+                }
+                
+                let ext = eachUrl.pathExtension
+                let fileName = eachUrl.lastPathComponent
+                let extIndex = fileName.index(fileName.startIndex, offsetBy: fileName.count - (ext.count + 1))
+                let withoutExt = fileName[fileName.startIndex..<extIndex]
+                let newOut = eachUrl.deletingLastPathComponent().appendingPathComponent("\(withoutExt).json")
+                
+                let jsonData:Data = try encoder.encode(document)
+                let outHandle = try createFileHandle(newOut)
+                outHandle.write(jsonData)
+                print("Success: \(newOut.path)")
+            } catch {
+                print("Failed: \(error.localizedDescription)")
             }
-            print("Validating")
-            let document = Document(data: data)
-            let validation = document.validate()
-            if (validation.isValid == false) {
-                throw AppError("Invalid bson at pos \(validation.errorPosition ?? -1)\nKey: \(validation.key ?? "N/A")\nReason: \(validation.reason ?? "N/A")")
-            }
-            
-            print("Is Valid")
-            let ext = eachUrl.pathExtension
-            let fileName = eachUrl.lastPathComponent
-            let extIndex = fileName.index(fileName.startIndex, offsetBy: fileName.count - (ext.count + 1))
-            let withoutExt = fileName[fileName.startIndex..<extIndex]
-            let newOut = eachUrl.deletingLastPathComponent().appendingPathComponent("\(withoutExt).json")
-            
-            print("creating file: \(newOut.path)")
-            guard FileManager.default.createFile(
-                atPath: newOut.path,
-                contents: nil,
-                attributes: [:]
-            ) else {
-                throw AppError("Cannot access output file: \(newOut.path)")
-            }
-            
-            print("Creating handle for: \(newOut.path)")
-            let outHandle = try FileHandle(forWritingTo: newOut)
-            let jsonData:Data = try encoder.encode(document)
-            outHandle.write(jsonData)
         }
     }
 }
 
 let cmdLinArgs = CommandLine.arguments.dropFirst()
 var args:[String] = Array(cmdLinArgs)
+
+if cmdLinArgs.count == 0 {
+    args = ["*.bson"]
+}
 
 if #available(macOS 10.15.4, *) {
     do {

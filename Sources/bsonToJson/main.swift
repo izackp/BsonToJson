@@ -38,6 +38,9 @@ struct ConvertBsonToJson: ParsableCommand {
     @Flag(help: "Use standard out instead of creating a new file.")
     var useStdOut: Bool = false
     
+    @Flag(help: "Automatically overwrite existing files")
+    var overwrite: Bool = false
+    
     @Argument(help: "Path to file to convert", completion: .file(), transform: URL.init(fileURLWithPath:))
     var inputFile: URL? = nil
     
@@ -74,7 +77,15 @@ struct ConvertBsonToJson: ParsableCommand {
                     throw AppError("Input File is required if useStdOut is not specified")
                 }
             }
-            guard FileManager.default.createFile(
+            let fm = FileManager.default
+            if (fm.fileExists(atPath: outFile.path)) {
+                if (overwrite) {
+                    return try FileHandle(forWritingTo: outFile)
+                } else {
+                    throw AppError("File already exists. Specify overwrite to ignore. \(outFile.path)")
+                }
+            }
+            guard fm.createFile(
                 atPath: outFile.path,
                 contents: nil,
                 attributes: [:]
