@@ -50,7 +50,6 @@ struct ConvertBsonToJson: ParsableCommand {
             }
         }
         
-        print("creating file: \(url.path)")
         guard fm.createFile(
             atPath: url.path,
             contents: nil,
@@ -97,11 +96,44 @@ struct ConvertBsonToJson: ParsableCommand {
     }
 }
 
+if (CommandLine.arguments.count == 0) {
+    print("Error: Expected at least 1 command line argument (the program directory)")
+    exit(1)
+}
+
 let cmdLinArgs = CommandLine.arguments.dropFirst()
 var args:[String] = Array(cmdLinArgs)
 
 if cmdLinArgs.count == 0 {
-    args = ["*.bson"]
+    let fm = FileManager.default
+    let workingDir = CommandLine.arguments[0]//fm.currentDirectoryPath
+    guard let workingDirUrl = URL(string: workingDir) else {
+        print("Error: could not convert \(workingDir) to a url.")
+        exit(1)
+    }
+    let parentDirectory = workingDirUrl.deletingLastPathComponent()
+    print("No dir. Scanning: \(parentDirectory.path)")
+    //fm.enumerator(at: parentDirectory, includingPropertiesForKeys: [URLResourceKey.isDirectoryKey])
+    let fileIterator = try fm.contentsOfDirectory(at: parentDirectory, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsSubdirectoryDescendants])
+    let filesOnly = fileIterator.filter { (url) -> Bool in
+        do {
+            let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey])
+            let isDirectory = resourceValues.isDirectory ?? true
+            if (isDirectory) {
+                return false
+            }
+        } catch { return false }
+        return url.pathExtension.lowercased() == "bson"
+    }
+    
+    let fileList = filesOnly.map({ $0.path })
+    if (fileList.count == 0) {
+        print("No bson files found")
+        exit(0)
+    } else {
+        print("Found \(fileList.count) files.")
+    }
+    args = fileList
 }
 
 if #available(macOS 10.15.4, *) {
@@ -111,7 +143,9 @@ if #available(macOS 10.15.4, *) {
         try command.run()
     } catch {
         print("Error: \(error.localizedDescription)")
+        exit(1)
     }
 } else {
     print("This only works on mac 10.15.4 and newer.")
+    exit(1)
 }
