@@ -73,7 +73,7 @@ struct BsonToJson: ParsableCommand {
     
     static let configuration = CommandConfiguration(
             abstract: "A utility for converting bson files.",
-            version: "0.2.0",
+            version: "0.2.1",
             subcommands: [io.self, batch.self],
             defaultSubcommand: batch.self)
     
