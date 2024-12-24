@@ -103,7 +103,7 @@ struct BsonToJson: ParsableCommand {
         var overwrite: Bool = false
         
         @Argument(help: "Files to convert", completion: .file(), transform: URL.init(fileURLWithPath:))
-        var inputFiles: [URL]
+        var inputFiles: [URL] = []
         
         func fetchInputFiles() throws -> [URL] {
             if inputFiles.count > 0 {
@@ -135,15 +135,10 @@ struct BsonToJson: ParsableCommand {
                         throw AppError("Empty input.")
                     }
                     
-                    let document = Document(data: data)
-                    let validation = document.validate()
-                    if (validation.isValid == false) {
-                        throw AppError("Invalid bson at pos \(validation.errorPosition ?? -1)\nKey: \(validation.key ?? "N/A")\nReason: \(validation.reason ?? "N/A")")
-                    }
+                    let finalDoc = try buildDocWithData(data)
                     
                     let newOut = eachUrl.convertExtension("json")
-                    
-                    let jsonData:Data = try encoder.encode(document)
+                    let jsonData:Data = try encoder.encode(finalDoc)
                     let outHandle = try createFileOutHandle(newOut, overwrite)
                     outHandle.write(jsonData)
                     print("Success: \(newOut.path)")
@@ -152,6 +147,47 @@ struct BsonToJson: ParsableCommand {
                 }
             }
         }
+    }
+    
+    static func removeInfFromDocument(_ doc:inout Document) -> Document? {
+        var newKeyValues:[String:Primitive] = [:]
+        for (key, value) in doc {
+            if var inner = value as? Document {
+                if let result = removeInfFromDocument(&inner) {
+                    newKeyValues[key] = result
+                }
+            }
+            if let dbl = value as? Double {
+                if (dbl.isInfinite) {
+                    newKeyValues[key] = "+inf"
+                } else if (dbl.isNaN) {
+                    newKeyValues[key] = "nan"
+                } else if (dbl == -Double.infinity) {
+                    newKeyValues[key] = "-inf"
+                }
+            }
+        }
+        if (newKeyValues.count == 0) {
+            return nil
+        }
+        for (key, value) in newKeyValues {
+            doc[key] = value
+        }
+        return doc
+    }
+    
+    static func buildDocWithData(_ data:Data) throws -> Document {
+        var documentBefore = Document(data: data)
+        let validation = documentBefore.validate()
+        if (validation.isValid == false) {
+            throw AppError("Invalid bson at pos \(validation.errorPosition ?? -1)\nKey: \(validation.key ?? "N/A")\nReason: \(validation.reason ?? "N/A")")
+        }
+        let moddedDoc = removeInfFromDocument(&documentBefore)
+        if moddedDoc != nil {
+            print("Found inf or nan doubles. Will convert those values to strings.")
+        }
+        let finalDoc = moddedDoc ?? documentBefore
+        return finalDoc
     }
     
     @available(macOS 10.15.4, *)
@@ -200,14 +236,11 @@ struct BsonToJson: ParsableCommand {
             guard let data = try fileInHandle.readToEnd() else {
                 throw AppError("Empty input.")
             }
-            let document = Document(data: data)
-            let validation = document.validate()
-            if (validation.isValid == false) {
-                throw AppError("Invalid bson at pos \(validation.errorPosition ?? -1)\nKey: \(validation.key ?? "N/A")\nReason: \(validation.reason ?? "N/A")")
-            }
+
+            let finalDoc = try buildDocWithData(data)
             let encoder = JSONEncoder()
             encoder.outputFormatting = .prettyPrinted
-            let jsonData:Data = try encoder.encode(document)
+            let jsonData:Data = try encoder.encode(finalDoc)
             try createFileOutHandle().write(jsonData)
         }
     }
